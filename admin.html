@@ -463,7 +463,6 @@
     </style>
 </head>
 <body>
-    
     <aside class="sidebar">
         <div class="logo-section">
             <img src="Screenshot 2025-12-04 131752.png" alt="Logo" class="logo-img">
@@ -700,50 +699,40 @@
             try {
                 const { data, error } = await supabase.from('products').select('count');
                 if (error) {
-                    console.error('Database connection error:', error);
                     showToast('Gagal terhubung ke database: ' + error.message, 'error');
                 }
             } catch (e) {
-                console.error('Connection test failed:', e);
+                showToast('Gagal menghubungkan ke server', 'error');
             }
             
-            console.log('Initial dashboard load...');
-            await loadDashboard();
+            loadDashboard();
             setupNavigation();
-            
-            setInterval(async () => {
-                const currentPage = document.querySelector('.nav-item.active')?.getAttribute('data-page');
-                if (currentPage === 'dashboard' || !currentPage) {
-                    console.log('Auto-refreshing dashboard...');
-                    await loadDashboard();
-                }
-            }, 10000);
-            
-            window.addEventListener('storage', async (e) => {
-                if (e.key === 'sweetify_new_order') {
-                    console.log('New order detected from storage event!');
-                    await loadDashboard();
-                    showToast('🎉 Pesanan baru masuk!', 'success');
-                }
-            });
-            
+            setupRealtimeOrders();
+        });
+
+        function setupRealtimeOrders() {
             const ordersSubscription = supabase
-                .channel('orders-changes')
-                .on('postgres_changes', 
-                    { event: 'INSERT', schema: 'public', table: 'orders' }, 
-                    async (payload) => {
-                        console.log('New order detected via realtime!', payload);
-                        const currentPage = document.querySelector('.nav-item.active')?.getAttribute('data-page');
-                        if (currentPage === 'dashboard' || !currentPage) {
-                            await loadDashboard();
-                            showToast('🎉 Pesanan baru masuk!', 'success');
+                .channel('orders-channel')
+                .on(
+                    'postgres_changes',
+                    {
+                        event: '*',
+                        schema: 'public',
+                        table: 'orders'
+                    },
+                    (payload) => {
+                        const currentPage = document.querySelector('[id$="-page"]:not(.hidden)');
+                        if (currentPage && currentPage.id === 'dashboard-page') {
+                            loadDashboard();
+                        }
+                        
+                        if (currentPage && currentPage.id === 'orders-page') {
+                            loadOrders();
                         }
                     }
                 )
                 .subscribe();
-                
-            console.log('Realtime subscription active');
-        });
+        }
 
         function setupNavigation() {
             document.querySelectorAll('.nav-item').forEach(item => {
@@ -777,11 +766,6 @@
 
         async function loadDashboard() {
             try {
-                const recentOrdersTable = document.getElementById('recent-orders');
-                if (recentOrdersTable) {
-                    recentOrdersTable.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 20px;"><i class="fas fa-spinner fa-spin"></i> Memuat data...</td></tr>';
-                }
-
                 const [products, orders] = await Promise.all([
                     supabase.from('products').select('*', { count: 'exact' }),
                     supabase.from('orders').select('*').order('created_at', { ascending: false })
@@ -793,31 +777,16 @@
                 const revenue = orders.data?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
                 document.getElementById('total-revenue').textContent = formatCurrency(revenue);
 
-                const recentOrders = orders.data?.slice(0, 5) || [];
-                console.log('Loading dashboard - Recent orders:', recentOrders.length, recentOrders);
-                displayRecentOrders(recentOrders);
+                displayRecentOrders(orders.data?.slice(0, 5) || []);
             } catch (error) {
-                console.error('Error loading dashboard:', error);
-                showToast('Gagal memuat data dashboard', 'error');
-                
-                const recentOrdersTable = document.getElementById('recent-orders');
-                if (recentOrdersTable) {
-                    recentOrdersTable.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 20px; color: #dc3545;">Gagal memuat data</td></tr>';
-                }
+                showToast('Gagal memuat dashboard', 'error');
             }
         }
 
         function displayRecentOrders(orders) {
             const tbody = document.getElementById('recent-orders');
-            if (!tbody) {
-                console.error('Element recent-orders not found');
-                return;
-            }
-            
-            console.log('Displaying recent orders:', orders);
-            
-            if (!orders || orders.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 40px; color: #999;"><i class="fas fa-inbox"></i><br><br>Belum ada pesanan</td></tr>';
+            if (orders.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center">Belum ada pesanan</td></tr>';
                 return;
             }
 
@@ -828,7 +797,7 @@
                 const preorderInfo = order.is_preorder && order.preorder_date ? 
                     `<div class="preorder-info">
                         <i class="fas fa-calendar-alt"></i> 
-                        <strong>Pengambilan:</strong> 
+                        <strong>Tanggal Pengambilan:</strong> 
                         <span class="preorder-date-display">${formatDate(order.preorder_date)}</span>
                         ${order.preorder_time ? ` <i class="fas fa-clock"></i> ${order.preorder_time}` : ''}
                     </div>` : '';
@@ -836,20 +805,13 @@
                 return `
                     <tr>
                         <td>
-                            <div style="font-weight: 600;">${order.order_number} ${preorderBadge}</div>
+                            <div>${order.order_number} ${preorderBadge}</div>
                             ${preorderInfo}
                         </td>
-                        <td>
-                            <strong>${order.customer_name}</strong><br>
-                            <small style="color: #666;">${order.customer_phone || '-'}</small>
-                        </td>
-                        <td><strong>${formatCurrency(order.total_amount)}</strong></td>
+                        <td>${order.customer_name}</td>
+                        <td>${formatCurrency(order.total_amount)}</td>
                         <td><span class="badge badge-${getStatusColor(order.status)}">${order.status}</span></td>
-                        <td>${new Date(order.created_at).toLocaleDateString('id-ID', { 
-                            day: '2-digit', 
-                            month: 'short', 
-                            year: 'numeric'
-                        })}</td>
+                        <td>${new Date(order.created_at).toLocaleDateString('id-ID')}</td>
                     </tr>
                 `;
             }).join('');
@@ -866,7 +828,6 @@
 
                 displayProducts(data || []);
             } catch (error) {
-                console.error('Error loading products:', error);
                 showToast('Gagal memuat produk', 'error');
             }
         }
@@ -887,7 +848,7 @@
                     <td>${product.stock || 0}</td>
                     <td><span class="badge ${product.is_available ? 'badge-success' : 'badge-danger'}">${product.is_available ? 'Tersedia' : 'Habis'}</span></td>
                     <td>
-                        <button class="btn btn-sm btn-primary" onclick='editProduct(${JSON.stringify(product).replace(/'/g, "&apos;")})'>
+                        <button class="btn btn-sm btn-primary" onclick='editProduct(${JSON.stringify(product)})'>
                             <i class="fas fa-edit"></i>
                         </button>
                         <button class="btn btn-sm btn-danger" onclick="deleteProduct('${product.id}')">
@@ -947,7 +908,7 @@
                 } else {
                     const { error } = await supabase
                         .from('products')
-                        .insert(productData);
+                        .insert([productData]);
 
                     if (error) throw error;
                     showToast('Produk berhasil ditambahkan');
@@ -956,7 +917,6 @@
                 closeProductModal();
                 loadProducts();
             } catch (error) {
-                console.error('Error saving product:', error);
                 showToast('Gagal menyimpan produk', 'error');
             }
         });
@@ -976,7 +936,6 @@
                 showToast('Produk berhasil dihapus');
                 loadProducts();
             } catch (error) {
-                console.error('Error deleting product:', error);
                 showToast('Gagal menghapus produk', 'error');
             }
         }
@@ -985,15 +944,24 @@
             try {
                 const { data: orders, error } = await supabase
                     .from('orders')
-                    .select('*')
+                    .select(`
+                        *,
+                        order_items (
+                            product_id,
+                            product_name,
+                            price,
+                            quantity,
+                            subtotal,
+                            image_url
+                        )
+                    `)
                     .order('created_at', { ascending: false });
 
                 if (error) throw error;
 
                 displayOrders(orders || []);
             } catch (error) {
-                console.error('Error loading orders:', error);
-                showToast('Gagal memuat pesanan', 'error');
+                showToast('Gagal memuat pesanan: ' + error.message, 'error');
             }
         }
 
@@ -1005,8 +973,11 @@
             }
 
             tbody.innerHTML = orders.map(order => {
-                const items = order.items ? JSON.parse(order.items) : [];
+                const items = order.order_items || [];
                 const itemsCount = items.length;
+                
+                const itemsList = items.map(item => `${item.product_name} (${item.quantity}x)`).join(', ');
+                const itemsPreview = itemsList.length > 50 ? itemsList.substring(0, 50) + '...' : itemsList;
                 
                 const preorderBadge = order.is_preorder ? 
                     `<span class="preorder-badge"><i class="fas fa-calendar-check"></i> Pre-Order</span>` : '';
@@ -1019,8 +990,6 @@
                         ${order.preorder_time ? ` <i class="fas fa-clock"></i> ${order.preorder_time}` : ''}
                     </div>` : '';
 
-                const orderData = JSON.stringify(order).replace(/'/g, "&apos;");
-
                 return `
                     <tr>
                         <td>
@@ -1031,21 +1000,24 @@
                             ${order.customer_name}<br>
                             <small style="color: #666;">${order.customer_phone}</small>
                         </td>
-                        <td>${itemsCount} item</td>
+                        <td>
+                            <div style="font-size: 13px; color: #333; font-weight: 600;">${itemsCount} produk</div>
+                            <div style="font-size: 11px; color: #666; margin-top: 4px;" title="${itemsList}">${itemsPreview}</div>
+                        </td>
                         <td>${formatCurrency(order.total_amount)}</td>
                         <td>
-                            <select class="form-control" onchange="updateOrderStatus('${order.id}', this.value)" style="width: auto; padding: 4px 8px;">
+                            <select class="form-control" onchange="updateOrderStatus('${order.id}', this.value, '${order.user_id}')" style="width: auto; padding: 4px 8px;">
                                 <option value="Menunggu Pembayaran" ${order.status === 'Menunggu Pembayaran' ? 'selected' : ''}>Menunggu Pembayaran</option>
                                 <option value="Diproses" ${order.status === 'Diproses' ? 'selected' : ''}>Diproses</option>
-                                 <option value="Dikirim" ${order.status === 'Dikirim' ? 'selected' : ''}>Dikirim</option>
                                 <option value="Siap Diambil" ${order.status === 'Siap Diambil' ? 'selected' : ''}>Siap Diambil</option>
+                                <option value="Sedang Dikirim" ${order.status === 'Sedang Dikirim' ? 'selected' : ''}>Sedang Dikirim</option>
                                 <option value="Selesai" ${order.status === 'Selesai' ? 'selected' : ''}>Selesai</option>
                                 <option value="Dibatalkan" ${order.status === 'Dibatalkan' ? 'selected' : ''}>Dibatalkan</option>
                             </select>
                         </td>
                         <td>${new Date(order.created_at).toLocaleDateString('id-ID')}</td>
                         <td>
-                            <button class="btn btn-sm btn-primary" onclick='showOrderDetail(${orderData})'>
+                            <button class="btn btn-sm btn-primary" onclick='showOrderDetail(${JSON.stringify(order).replace(/'/g, "&#39;")})'>
                                 <i class="fas fa-eye"></i> Detail
                             </button>
                         </td>
@@ -1054,7 +1026,7 @@
             }).join('');
         }
 
-        async function updateOrderStatus(orderId, newStatus) {
+        async function updateOrderStatus(orderId, newStatus, userId) {
             try {
                 const { data: order, error: fetchError } = await supabase
                     .from('orders')
@@ -1071,52 +1043,38 @@
 
                 if (updateError) throw updateError;
 
-                await createUserNotification(order.user_id, orderId, order.order_number, newStatus);
+                await createUserNotification(userId || order.user_id, orderId, order.order_number, newStatus, order.delivery_method);
 
                 showToast('Status pesanan berhasil diupdate dan notifikasi dikirim ke pelanggan');
                 loadOrders();
                 loadDashboard();
             } catch (error) {
-                console.error('Error updating order status:', error);
                 showToast('Gagal mengupdate status', 'error');
             }
         }
 
-        async function createUserNotification(userId, orderId, orderNumber, status) {
+        async function createUserNotification(userId, orderId, orderNumber, status, deliveryMethod) {
             try {
-                const notifKey = `sweetify_notifications_${userId}`;
-                let notifications = [];
+                let notifStatus = status;
+                let message = '';
                 
-                try {
-                    const stored = localStorage.getItem(notifKey);
-                    notifications = stored ? JSON.parse(stored) : [];
-                } catch (error) {
-                    console.log('Could not access user localStorage, notification will be available when user opens the app');
-                }
-
-                const messages = {
-                    'Diproses': `Pesanan ${orderNumber} sedang diproses. Kami akan segera menyiapkan pesanan Anda.`,
-                    'Siap Diambil': `Pesanan ${orderNumber} sudah siap diambil! Silakan datang ke toko kami.`,
-                    'Selesai': `Pesanan ${orderNumber} telah selesai. Terima kasih telah berbelanja di Sweetify!`,
-                    'Dibatalkan': `Pesanan ${orderNumber} telah dibatalkan. Hubungi kami jika ada pertanyaan.`
-                };
-
-                const notification = {
-                    id: 'notif_' + Date.now(),
-                    order_id: orderId,
-                    order_number: orderNumber,
-                    status: status,
-                    message: messages[status] || 'Status pesanan telah diperbarui',
-                    created_at: new Date().toISOString(),
-                    read: false
-                };
-
-                notifications.unshift(notification);
-                
-                try {
-                    localStorage.setItem(notifKey, JSON.stringify(notifications));
-                } catch (error) {
-                    console.log('Notification created, will sync when user opens app');
+                if (status === 'Diproses') {
+                    notifStatus = 'Diproses';
+                    message = `Pesanan ${orderNumber} sedang diproses. Kami akan segera menyiapkan pesanan Anda.`;
+                } else if (status === 'Siap Diambil') {
+                    notifStatus = 'Siap Diambil';
+                    message = `Pesanan ${orderNumber} sudah siap diambil! Silakan datang ke toko kami.`;
+                } else if (status === 'Sedang Dikirim') {
+                    notifStatus = 'Sedang Dikirim';
+                    message = `Pesanan ${orderNumber} sedang dikirim menggunakan GoSend. Mohon menunggu ya!`;
+                } else if (status === 'Selesai') {
+                    notifStatus = 'Selesai';
+                    message = `Pesanan ${orderNumber} telah selesai. Terima kasih telah berbelanja di Sweetify!`;
+                } else if (status === 'Dibatalkan') {
+                    notifStatus = 'Dibatalkan';
+                    message = `Pesanan ${orderNumber} telah dibatalkan. Hubungi kami jika ada pertanyaan.`;
+                } else {
+                    message = `Status pesanan ${orderNumber} telah diperbarui.`;
                 }
 
                 const { error: dbError } = await supabase
@@ -1125,23 +1083,21 @@
                         user_id: userId,
                         order_id: orderId,
                         order_number: orderNumber,
-                        status: status,
-                        message: messages[status] || 'Status pesanan telah diperbarui',
+                        status: notifStatus,
+                        message: message,
                         read: false,
                         created_at: new Date().toISOString()
                     });
 
-                if (dbError) {
-                    console.log('Note: Could not save to database, but notification created locally');
-                }
+                if (dbError) throw dbError;
                 
             } catch (error) {
-                console.error('Error creating notification:', error);
+                // Silent fail
             }
         }
 
         function showOrderDetail(order) {
-            const items = order.items ? JSON.parse(order.items) : [];
+            const items = order.order_items || [];
             
             const preorderInfo = order.is_preorder ? `
                 <div style="background: #fff3cd; padding: 16px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #ffc107;">
@@ -1164,10 +1120,10 @@
                 </div>
             ` : '';
 
-            const deliveryIcon = order.delivery_method === 'Diantar (GoSend)' ? 
-                '<i class="fas fa-motorcycle"></i>' : '<i class="fas fa-store"></i>';
-            const deliveryColor = order.delivery_method === 'Diantar (GoSend)' ? '#4caf50' : '#2196f3';
-            const deliveryBg = order.delivery_method === 'Diantar (GoSend)' ? '#e8f5e9' : '#e3f2fd';
+            const deliveryIcon = order.delivery_method === 'gosend' ? '<i class="fas fa-motorcycle"></i>' : '<i class="fas fa-store"></i>';
+            const deliveryColor = order.delivery_method === 'gosend' ? '#4caf50' : '#2196f3';
+            const deliveryBg = order.delivery_method === 'gosend' ? '#e8f5e9' : '#e3f2fd';
+            const deliveryText = order.delivery_method === 'gosend' ? 'Diantar (GoSend)' : 'Diambil di Toko';
 
             const content = `
                 <div style="margin-bottom: 20px;">
@@ -1177,7 +1133,7 @@
                     <div style="background: ${deliveryBg}; padding: 12px; border-radius: 8px; margin-bottom: 16px; border-left: 4px solid ${deliveryColor};">
                         <p style="margin: 0; color: ${deliveryColor}; font-weight: 600;">
                             ${deliveryIcon} <strong>Metode Pengiriman:</strong> 
-                            <span style="font-size: 15px;">${order.delivery_method || 'Diambil Sendiri'}</span>
+                            <span style="font-size: 15px;">${deliveryText}</span>
                         </p>
                     </div>
 
@@ -1189,37 +1145,64 @@
                     ${order.notes ? `<p><strong>Catatan:</strong> ${order.notes}</p>` : ''}
                 </div>
 
-                <h4 style="margin-bottom: 12px;">Item Pesanan:</h4>
-                <table style="width: 100%; margin-bottom: 20px;">
+                <h4 style="margin-bottom: 12px;">📦 Produk yang Dibeli:</h4>
+                <table style="width: 100%; margin-bottom: 20px; border: 1px solid #dee2e6;">
                     <thead>
                         <tr style="background: #f8f9fa;">
-                            <th style="padding: 8px;">Produk</th>
-                            <th style="padding: 8px; text-align: center;">Qty</th>
-                            <th style="padding: 8px; text-align: right;">Harga</th>
-                            <th style="padding: 8px; text-align: right;">Subtotal</th>
+                            <th style="padding: 12px; border-bottom: 2px solid #dee2e6;">Produk</th>
+                            <th style="padding: 12px; text-align: center; border-bottom: 2px solid #dee2e6;">Jumlah</th>
+                            <th style="padding: 12px; text-align: right; border-bottom: 2px solid #dee2e6;">Harga Satuan</th>
+                            <th style="padding: 12px; text-align: right; border-bottom: 2px solid #dee2e6;">Subtotal</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${items.map(item => `
-                            <tr>
-                                <td style="padding: 8px;">${item.name}</td>
-                                <td style="padding: 8px; text-align: center;">${item.quantity}</td>
-                                <td style="padding: 8px; text-align: right;">${formatCurrency(item.price)}</td>
-                                <td style="padding: 8px; text-align: right;">${formatCurrency(item.price * item.quantity)}</td>
+                        ${items.map((item, index) => `
+                            <tr style="${index % 2 === 0 ? 'background: #ffffff;' : 'background: #f8f9fa;'}">
+                                <td style="padding: 12px; border-bottom: 1px solid #dee2e6;">
+                                    <div style="display: flex; align-items: center; gap: 10px;">
+                                        <img src="${item.image_url || 'https://via.placeholder.com/50'}" 
+                                             style="width: 50px; height: 50px; border-radius: 6px; object-fit: cover;"
+                                             onerror="this.src='https://via.placeholder.com/50'">
+                                        <div style="font-weight: 500; color: #333;">${item.product_name}</div>
+                                    </div>
+                                </td>
+                                <td style="padding: 12px; text-align: center; border-bottom: 1px solid #dee2e6;">
+                                    <span style="background: #e3f2fd; color: #1976d2; padding: 4px 12px; border-radius: 12px; font-weight: 600;">
+                                        ${item.quantity} pcs
+                                    </span>
+                                </td>
+                                <td style="padding: 12px; text-align: right; border-bottom: 1px solid #dee2e6; color: #666;">
+                                    ${formatCurrency(item.price)}
+                                </td>
+                                <td style="padding: 12px; text-align: right; border-bottom: 1px solid #dee2e6; font-weight: 600; color: #a0522d;">
+                                    ${formatCurrency(item.subtotal)}
+                                </td>
                             </tr>
                         `).join('')}
                     </tbody>
                     <tfoot>
-                        <tr style="background: #f8f9fa; font-weight: bold;">
-                            <td colspan="3" style="padding: 12px; text-align: right;">Total:</td>
-                            <td style="padding: 12px; text-align: right;">${formatCurrency(order.total_amount)}</td>
+                        <tr style="background: #fff3e0; font-weight: bold;">
+                            <td colspan="3" style="padding: 16px; text-align: right; font-size: 16px; color: #333; border-top: 2px solid #a0522d;">
+                                Total Pembayaran:
+                            </td>
+                            <td style="padding: 16px; text-align: right; font-size: 18px; color: #a0522d; border-top: 2px solid #a0522d;">
+                                ${formatCurrency(order.total_amount)}
+                            </td>
                         </tr>
                     </tfoot>
                 </table>
 
-                <p style="font-size: 12px; color: #666;">
-                    <strong>Tanggal Pesanan:</strong> ${new Date(order.created_at).toLocaleString('id-ID')}
-                </p>
+                <div style="background: #f8f9fa; padding: 12px; border-radius: 8px; border-left: 4px solid #6c757d;">
+                    <p style="margin: 0; font-size: 12px; color: #666;">
+                        <strong><i class="far fa-calendar"></i> Tanggal Pesanan:</strong> ${new Date(order.created_at).toLocaleString('id-ID', { 
+                            day: 'numeric', 
+                            month: 'long', 
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        })}
+                    </p>
+                </div>
             `;
 
             document.getElementById('order-detail-content').innerHTML = content;
@@ -1253,6 +1236,7 @@
                 'Menunggu Pembayaran': 'warning',
                 'Diproses': 'info',
                 'Siap Diambil': 'success',
+                'Sedang Dikirim': 'info',
                 'Selesai': 'success',
                 'Dibatalkan': 'danger'
             };
@@ -1276,27 +1260,9 @@
             }, 3000);
         }
 
-        async function logout() {
-            if (confirm('Yakin ingin keluar dari Admin?')) {
-                try {
-                    if (typeof supabase !== 'undefined') {
-                        await supabase.auth.signOut();
-                    }
-                    
-                    localStorage.removeItem('admin_session');
-                    localStorage.removeItem('isAdmin');
-                    sessionStorage.clear();
-                    
-                    showToast('Berhasil logout dari Admin');
-                    
-                    setTimeout(() => {
-                        window.location.replace('index.html');
-                    }, 500);
-                    
-                } catch (error) {
-                    console.error('Logout error:', error);
-                    window.location.replace('index.html');
-                }
+        function logout() {
+            if (confirm('Yakin ingin keluar?')) {
+                window.location.href = 'index.html';
             }
         }
 
