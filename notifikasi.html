@@ -129,11 +129,6 @@
             color: #084298;
         }
 
-        .notification-icon.ready {
-            background-color: #d4edda;
-            color: #155724;
-        }
-
         .notification-icon.completed {
             background-color: #d1e7dd;
             color: #0a3622;
@@ -388,13 +383,12 @@
 
         function getNotificationStyle(status) {
             const styles = {
-                'Diproses': { icon: 'fas fa-box', class: 'processing', title: '📦 Pesanan Diproses' },
-                'Dikirim': { icon: 'fas fa-truck', class: 'shipping', title: '🚚 Pesanan Dikirim' },
-                'Siap Diambil': { icon: 'fas fa-shopping-bag', class: 'ready', title: '✅ Pesanan Siap Diambil' },
-                'Selesai': { icon: 'fas fa-check-circle', class: 'completed', title: '✅ Pesanan Selesai' },
-                'Dibatalkan': { icon: 'fas fa-times-circle', class: 'cancelled', title: '❌ Pesanan Dibatalkan' }
+                'Diproses': { icon: 'fas fa-box', class: 'processing' },
+                'Dikirim': { icon: 'fas fa-truck', class: 'shipping' },
+                'Selesai': { icon: 'fas fa-check-circle', class: 'completed' },
+                'Dibatalkan': { icon: 'fas fa-times-circle', class: 'cancelled' }
             };
-            return styles[status] || { icon: 'fas fa-bell', class: 'processing', title: '🔔 Notifikasi' };
+            return styles[status] || { icon: 'fas fa-bell', class: 'processing' };
         }
 
         async function initNotifications() {
@@ -466,7 +460,10 @@
                         </div>
                         <div class="notification-content">
                             <div class="notification-title">
-                                ${style.title}
+                                ${notif.status === 'Diproses' ? '📦 Pesanan Diproses' : 
+                                  notif.status === 'Dikirim' ? '🚚 Pesanan Dikirim' :
+                                  notif.status === 'Selesai' ? '✅ Pesanan Selesai' :
+                                  '❌ Pesanan Dibatalkan'}
                             </div>
                             <div class="notification-message">
                                 ${notif.message}
